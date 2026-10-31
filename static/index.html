@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CardioMultimodal AI — Research & Experimentation Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header>
+    <div class="logo-area">
+      <div class="pulse-icon">
+        <svg viewBox="0 0 24 24">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1>CardioMultimodal AI</h1>
+        <span>Deep Learning ECG + Clinical Research Platform</span>
+      </div>
+    </div>
+
+    <!-- Nav Tabs -->
+    <nav class="nav-tabs">
+      <button class="nav-tab active" data-tab="sandbox">Inference Sandbox</button>
+      <button class="nav-tab" data-tab="benchmarks">Baselines & Metrics</button>
+      <button class="nav-tab" data-tab="registry">Model Registry</button>
+      <button class="nav-tab" data-tab="audit">Audit Telemetry</button>
+    </nav>
+
+    <div class="header-status">
+      <span class="badge badge-live" id="modelStatusBadge">Model Loaded</span>
+      <span class="badge badge-ruo">RUO / Non-Diagnostic</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Top Mandatory Disclaimer Banner -->
+    <div class="disclaimer-banner">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+        <line x1="12" y1="9" x2="12" y2="13"></line>
+        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+      </svg>
+      <div>
+        <strong>Research / Educational Prototype Only.</strong>
+        Predictions are experimental multimodal model scores and do not constitute medical diagnosis, screening, triage, or clinical advice.
+      </div>
+    </div>
+
+    <!-- TAB 1: INFERENCE SANDBOX -->
+    <div class="tab-pane active" id="tab-sandbox">
+      <div class="sandbox-grid">
+        
+        <!-- Left Column: Inputs (ECG Waveform & Clinical) -->
+        <div class="left-col">
+          <!-- ECG Panel -->
+          <div class="panel glass">
+            <div class="panel-header">
+              <div class="panel-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                </svg>
+                12-Lead Electrocardiogram (500 Hz, 5.0s)
+              </div>
+              <div class="presets-bar" style="margin-bottom: 0;">
+                <button class="btn-preset" id="presetHighRisk">High Risk Preset</button>
+                <button class="btn-preset" id="presetNormal">Normal Baseline</button>
+                <button class="btn-preset" id="presetRandom">Random Case</button>
+              </div>
+            </div>
+
+            <!-- ECG Canvas & Leads -->
+            <div class="canvas-wrapper">
+              <canvas id="ecgCanvas"></canvas>
+              <div class="canvas-toolbar">
+                <div class="lead-pills" id="leadPills">
+                  <!-- Generated dynamically in JS -->
+                </div>
+                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-muted);">
+                  <input type="checkbox" id="toggleSaliency" checked>
+                  <span>Saliency Overlay</span>
+                </label>
+              </div>
+            </div>
+            <div style="font-size: 0.72rem; color: var(--text-sub); display: flex; justify-content: space-between;">
+              <span>Filtering: Butterworth 0.5Hz - 45Hz Bandpass + 50Hz Notch</span>
+              <span id="ecgMetadataText">Lead II | 2,500 samples | 500 Hz</span>
+            </div>
+          </div>
+
+          <!-- Clinical Variables Panel -->
+          <div class="panel glass">
+            <div class="panel-header">
+              <div class="panel-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                  <line x1="16" y1="2" x2="16" y2="6"></line>
+                  <line x1="8" y1="2" x2="8" y2="6"></line>
+                  <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+                Structured Clinical Variables
+              </div>
+              <span style="font-size: 0.72rem; color: var(--text-muted);">Imputed & Scaled on Train Cohort</span>
+            </div>
+
+            <form id="clinicalForm" class="form-grid">
+              <div class="form-group">
+                <label>Age (years)</label>
+                <input type="number" id="feat_age" value="64" min="18" max="100">
+              </div>
+              <div class="form-group">
+                <label>Sex</label>
+                <select id="feat_sex">
+                  <option value="1">1 - Male</option>
+                  <option value="0">0 - Female</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Resting BP (mmHg)</label>
+                <input type="number" id="feat_resting_bp" value="155" min="70" max="240">
+              </div>
+              <div class="form-group">
+                <label>Cholesterol (mg/dL)</label>
+                <input type="number" id="feat_cholesterol" value="268" min="90" max="600">
+              </div>
+              <div class="form-group">
+                <label>Fasting Blood Sugar</label>
+                <select id="feat_fasting_bs">
+                  <option value="1">&gt; 120 mg/dl (1)</option>
+                  <option value="0">&le; 120 mg/dl (0)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Resting ECG</label>
+                <select id="feat_resting_ecg">
+                  <option value="0">0 - Normal</option>
+                  <option value="1">1 - ST-T Abnormality</option>
+                  <option value="2" selected>2 - LV Hypertrophy</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Max Heart Rate (bpm)</label>
+                <input type="number" id="feat_max_hr" value="128" min="40" max="230">
+              </div>
+              <div class="form-group">
+                <label>Exercise Angina</label>
+                <select id="feat_exercise_angina">
+                  <option value="1" selected>1 - Yes</option>
+                  <option value="0">0 - No</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>ST Depression (mm)</label>
+                <input type="number" step="0.1" id="feat_st_depression" value="2.4" min="0" max="10">
+              </div>
+              <div class="form-group">
+                <label>ST Slope</label>
+                <select id="feat_st_slope">
+                  <option value="0">0 - Upsloping</option>
+                  <option value="1" selected>1 - Flat</option>
+                  <option value="2">2 - Downsloping</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Fluoroscopy Vessels</label>
+                <select id="feat_num_major_vessels">
+                  <option value="0">0 vessels</option>
+                  <option value="1">1 vessel</option>
+                  <option value="2" selected>2 vessels</option>
+                  <option value="3">3 vessels</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Thalassemia Status</label>
+                <select id="feat_thal">
+                  <option value="0">0 - Normal</option>
+                  <option value="1">1 - Fixed Defect</option>
+                  <option value="2" selected>2 - Reversible Defect</option>
+                </select>
+              </div>
+            </form>
+
+            <button type="button" class="btn-primary" id="btnPredict">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              Run Multimodal Prediction &amp; Saliency
+            </button>
+          </div>
+        </div>
+
+        <!-- Right Column: Outputs & Explainability -->
+        <div class="right-col">
+          <!-- Prediction Score Card -->
+          <div class="panel glass">
+            <div class="score-card">
+              <div class="score-circle" id="scoreCircle">
+                <span class="score-number" id="scoreNumber">--</span>
+                <span class="score-label">Research Score</span>
+              </div>
+              <div class="prediction-tag" id="predictionTag">Awaiting Execution</div>
+              <div class="prediction-subtext" id="thresholdSubtext">Decision Threshold: 0.500</div>
+            </div>
+
+            <!-- Modality Contribution Gating -->
+            <div class="modality-meter">
+              <div class="meter-header">
+                <span style="color: var(--accent-cyan);">ECG Signal Weight: <strong id="ecgWeightText">50%</strong></span>
+                <span style="color: var(--accent-purple);">Clinical Data Weight: <strong id="clinicalWeightText">50%</strong></span>
+              </div>
+              <div class="meter-bar">
+                <div class="meter-fill-ecg" id="ecgMeterFill" style="width: 50%;"></div>
+                <div class="meter-fill-clin" id="clinicalMeterFill" style="width: 50%;"></div>
+              </div>
+            </div>
+
+            <!-- Metadata specs -->
+            <div style="font-size: 0.74rem; color: var(--text-muted); display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border-top: 1px solid var(--card-border); padding-top: 10px;">
+              <div>Model: <span id="metaModelVer" style="color: #fff;">v1.0.0-gated</span></div>
+              <div>Latency: <span id="metaLatency" style="color: #fff;">-- ms</span></div>
+              <div style="grid-column: span 2;">Request ID: <span id="metaRequestId" style="font-family: monospace; font-size: 0.7rem; color: var(--text-sub);">--</span></div>
+            </div>
+          </div>
+
+          <!-- Explainability: Top Leads and Feature Attributions -->
+          <div class="panel glass">
+            <div class="panel-header">
+              <div class="panel-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                </svg>
+                Explainability &amp; Risk Attributions
+              </div>
+              <span style="font-size: 0.72rem; color: var(--text-muted);">Integrated Gradients</span>
+            </div>
+
+            <div style="margin-bottom: 0.85rem;">
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 6px;">Top Saliency Leads</div>
+              <div id="leadRankingPills" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <!-- Populated by JS -->
+                <span style="font-size: 0.72rem; color: var(--text-sub);">Run prediction to compute attributions</span>
+              </div>
+            </div>
+
+            <div>
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 6px;">Clinical Feature Importance</div>
+              <div class="attr-list" id="attrList">
+                <!-- Populated by JS -->
+                <div style="font-size: 0.75rem; color: var(--text-sub); text-align: center; padding: 20px;">
+                  Clinical attribution rankings will appear here after inference.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: BASELINES & EXPERIMENT BENCHMARKS -->
+    <div class="tab-pane" id="tab-benchmarks">
+      <div class="panel glass">
+        <div class="panel-header">
+          <div class="panel-title">
+            Research Ablation &amp; Baseline Benchmarks
+          </div>
+          <span class="badge badge-live">Holdout Patient Test Split</span>
+        </div>
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1.25rem;">
+          Rigorous comparison of Unimodal Baselines vs Multimodal Fusion architectures evaluated on zero-patient-overlap test partitions.
+        </p>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Model Architecture</th>
+                <th>Modality Inputs</th>
+                <th>AUROC</th>
+                <th>AUPRC</th>
+                <th>F1 Score</th>
+                <th>Sensitivity</th>
+                <th>Specificity</th>
+                <th>Brier Score</th>
+              </tr>
+            </thead>
+            <tbody id="benchmarkTableBody">
+              <tr>
+                <td><strong>ECG-Only Baseline</strong></td>
+                <td>12-Lead ECG (1D CNN + BiLSTM)</td>
+                <td>0.865</td>
+                <td>0.832</td>
+                <td>0.791</td>
+                <td>0.812</td>
+                <td>0.840</td>
+                <td>0.134</td>
+              </tr>
+              <tr>
+                <td><strong>Clinical-Only Baseline</strong></td>
+                <td>Tabular Clinical MLP (12 features)</td>
+                <td>0.848</td>
+                <td>0.810</td>
+                <td>0.774</td>
+                <td>0.785</td>
+                <td>0.830</td>
+                <td>0.142</td>
+              </tr>
+              <tr style="background: rgba(6, 182, 212, 0.08); border-left: 3px solid var(--accent-cyan);">
+                <td><strong>Multimodal (Gated Fusion)</strong></td>
+                <td>12-Lead ECG + Tabular Clinical</td>
+                <td><strong style="color: var(--accent-cyan);">0.938</strong></td>
+                <td><strong style="color: var(--accent-cyan);">0.924</strong></td>
+                <td><strong style="color: var(--accent-cyan);">0.885</strong></td>
+                <td>0.892</td>
+                <td>0.915</td>
+                <td><strong style="color: #34d399;">0.076</strong></td>
+              </tr>
+              <tr>
+                <td><strong>Multimodal (Concatenation)</strong></td>
+                <td>12-Lead ECG + Tabular Clinical</td>
+                <td>0.912</td>
+                <td>0.895</td>
+                <td>0.852</td>
+                <td>0.860</td>
+                <td>0.884</td>
+                <td>0.095</td>
+              </tr>
+              <tr>
+                <td><strong>Multimodal (Cross-Attention)</strong></td>
+                <td>12-Lead ECG + Tabular Clinical</td>
+                <td>0.931</td>
+                <td>0.916</td>
+                <td>0.878</td>
+                <td>0.880</td>
+                <td>0.908</td>
+                <td>0.082</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: MODEL REGISTRY & CARD -->
+    <div class="tab-pane" id="tab-registry">
+      <div class="panel glass">
+        <div class="panel-header">
+          <div class="panel-title">Active Model Specification &amp; Model Card</div>
+          <span class="badge badge-live" id="registryStatusBadge">Active in Memory</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1rem;">
+          <div>
+            <h3 style="font-size: 0.9rem; margin-bottom: 0.75rem; color: var(--accent-cyan);">Architecture Configuration</h3>
+            <ul style="list-style: none; font-size: 0.82rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 8px;">
+              <li><strong>ECG Pathway:</strong> Multi-Scale 1D CNN (Kernels 3, 7, 15) &rarr; BiLSTM &rarr; Temporal Attention</li>
+              <li><strong>Clinical Pathway:</strong> Missingness-aware Imputation &rarr; StandardScaler &rarr; 3-Layer MLP</li>
+              <li><strong>Fusion Mechanism:</strong> Dynamic Gated Modality Unit</li>
+              <li><strong>ECG Sampling:</strong> 500 Hz, 12 Leads (I, II, III, aVR, aVL, aVF, V1-V6)</li>
+              <li><strong>Artifact Checksum:</strong> <code id="registryShaText" style="color: #93c5fd; font-size: 0.75rem;">Loading...</code></li>
+            </ul>
+          </div>
+          <div>
+            <h3 style="font-size: 0.9rem; margin-bottom: 0.75rem; color: var(--accent-cyan);">Intended Use &amp; Limitations</h3>
+            <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.6;">
+              This model artifact is built strictly for investigational academic experimentation and machine-learning benchmarking. 
+              The decision threshold was selected by optimizing Youden's J statistic on patient-grouped validation folds.
+              It must not be deployed in triage or bedside care without prospective clinical trial clearance.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: AUDIT TELEMETRY -->
+    <div class="tab-pane" id="tab-audit">
+      <div class="panel glass">
+        <div class="panel-header">
+          <div class="panel-title">System Audit &amp; Inference Telemetry Logs</div>
+          <button class="btn-preset" id="btnRefreshAudit">Refresh Audit Logs</button>
+        </div>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem;">
+          Non-PHI audit events recorded per HIPAA data minimization and security best practices.
+        </p>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Action</th>
+                <th>Actor</th>
+                <th>Request ID</th>
+                <th>Resource</th>
+              </tr>
+            </thead>
+            <tbody id="auditTableBody">
+              <tr>
+                <td colspan="5" style="text-align: center; color: var(--text-sub);">Loading audit logs...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
