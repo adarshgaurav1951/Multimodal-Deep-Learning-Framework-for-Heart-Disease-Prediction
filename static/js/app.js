@@ -22,6 +22,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadModelStatus();
   await loadPreset(true); // default to high risk preset for illustration
   setupEventListeners();
+  loadVisualizationData(); // Pre-load all publication figures, metrics and charts immediately!
   renderEcg();
 });
 
@@ -41,6 +42,11 @@ function setupTabs() {
         fetchAuditLogs();
       } else if (tab.dataset.tab === "visualizations") {
         loadVisualizationData();
+        setTimeout(() => {
+          renderAccuracyChart(activeMetric);
+          renderRocComparisonChart();
+          renderTrainingDynamicsChart(activeDynMode);
+        }, 50);
       }
     });
   });
@@ -173,6 +179,39 @@ function setupEventListeners() {
   document.getElementById("btnPredict")?.addEventListener("click", runPredictionAndExplain);
   document.getElementById("btnRefreshAudit")?.addEventListener("click", fetchAuditLogs);
   document.getElementById("btnRefreshVisualizations")?.addEventListener("click", loadVisualizationData);
+
+  // Quick Action Buttons on Main Dashboard to Inspect Diagnostic Figures
+  document.getElementById("btnGoToVisualizations")?.addEventListener("click", () => {
+    document.querySelectorAll(".nav-tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
+    const visTab = document.querySelector('.nav-tab[data-tab="visualizations"]');
+    visTab?.classList.add("active");
+    const pane = document.getElementById("tab-visualizations");
+    pane?.classList.add("active");
+    loadVisualizationData();
+    setTimeout(() => {
+      renderAccuracyChart(activeMetric);
+      renderRocComparisonChart();
+      renderTrainingDynamicsChart(activeDynMode);
+    }, 50);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
+  document.getElementById("btnViewFullExplainabilityFig")?.addEventListener("click", () => {
+    openModal(
+      "/v1/visualizations/06_explainability_attributions.png",
+      "Model Explainability & Risk Attribution Diagnostics",
+      "Top ECG Leads by Integrated Gradients Saliency and Clinical Risk Drivers with multi-color vertical attributions."
+    );
+  });
+
+  document.getElementById("btnViewAccuracyFig")?.addEventListener("click", () => {
+    openModal(
+      "/v1/visualizations/07_model_accuracy_comparison.png",
+      "Model Evaluation & Accuracy Benchmark",
+      "Diagnostic comparison of Accuracy, AUROC, AUPRC, F1, Sensitivity, and Specificity across CNN, BiLSTM, Transformers, and Multimodal Fusion."
+    );
+  });
 
   // Metric filter pills in visualizations
   document.querySelectorAll("#metricFilterPills .chart-pill").forEach(pill => {
@@ -925,25 +964,38 @@ function renderTrainingDynamicsChart(mode = "acc") {
   }
 }
 
-// 4. Render Publication Figures Gallery
+// 4. Render Publication Figures Gallery across Dashboard Grids
 function renderFiguresGallery(figures) {
-  const container = document.getElementById("figuresGalleryGrid");
-  if (!container || !figures) return;
-  container.innerHTML = "";
+  const containers = [
+    document.getElementById("figuresGalleryGrid"),
+    document.getElementById("sandboxFiguresGrid")
+  ].filter(Boolean);
 
-  figures.forEach(fig => {
-    const card = document.createElement("div");
-    card.className = "figure-card";
-    card.innerHTML = `
-      <img class="figure-thumb" src="${fig.url}" alt="${fig.title}" onerror="this.src='/static/css/placeholder.png'; this.style.opacity=0.3;">
-      <div class="figure-info">
-        <h4>${fig.title}</h4>
-        <p>${fig.description}</p>
-        <span style="font-size: 0.68rem; color: var(--accent-cyan); margin-top: 6px; display: inline-block;">Click to inspect high-res &rarr;</span>
-      </div>
-    `;
-    card.addEventListener("click", () => openModal(fig.url, fig.title, fig.description));
-    container.appendChild(card);
+  if (containers.length === 0 || !figures) return;
+
+  containers.forEach(container => {
+    container.innerHTML = "";
+    figures.forEach(fig => {
+      const card = document.createElement("div");
+      card.className = "figure-card";
+      card.innerHTML = `
+        <div style="position: relative;">
+          <img class="figure-thumb" src="${fig.url}" alt="${fig.title}" loading="lazy" onerror="this.src='/static/css/placeholder.png'; this.style.opacity=0.3;">
+          <span style="position: absolute; top: 8px; right: 8px; background: rgba(7, 11, 20, 0.85); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-size: 0.65rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; backdrop-filter: blur(4px);">
+            Fig ${fig.filename.split('_')[0]}
+          </span>
+        </div>
+        <div class="figure-info">
+          <h4>${fig.title}</h4>
+          <p>${fig.description}</p>
+          <span style="font-size: 0.7rem; color: var(--accent-cyan); margin-top: 8px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600;">
+            Click to inspect high-res &rarr;
+          </span>
+        </div>
+      `;
+      card.addEventListener("click", () => openModal(fig.url, fig.title, fig.description));
+      container.appendChild(card);
+    });
   });
 }
 

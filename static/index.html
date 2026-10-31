@@ -271,7 +271,45 @@
                 </div>
               </div>
             </div>
+
+            <!-- Quick Access to High-Resolution Diagnostic Figures -->
+            <div style="margin-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.06); padding-top: 10px; display: flex; gap: 8px;">
+              <button class="btn-preset" id="btnViewFullExplainabilityFig" style="flex: 1; font-size: 0.72rem; justify-content: center; display: inline-flex; align-items: center; gap: 4px;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                Inspect Saliency Chart
+              </button>
+              <button class="btn-preset" id="btnViewAccuracyFig" style="flex: 1; font-size: 0.72rem; justify-content: center; display: inline-flex; align-items: center; gap: 4px;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                View Accuracy Chart
+              </button>
+            </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Diagnostic & Model Visualizations Gallery Showcase on Main Dashboard -->
+      <div class="panel glass" style="margin-top: 1.5rem;">
+        <div class="panel-header" style="flex-wrap: wrap; gap: 8px;">
+          <div class="panel-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <circle cx="8.5" cy="8.5" r="1.5"></circle>
+              <polyline points="21 15 16 10 5 21"></polyline>
+            </svg>
+            Model Visualizations &amp; Publication Diagnostic Gallery (All 9 Figures)
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <span class="badge badge-live">9 High-Resolution Figures</span>
+            <button class="btn-preset" id="btnGoToVisualizations" style="border-color: var(--accent-cyan); color: var(--accent-cyan); font-weight: 600;">
+              Open Interactive Accuracy &amp; ROC Suite &rarr;
+            </button>
+          </div>
+        </div>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+          Click any diagnostic figure below to zoom and inspect the full-resolution publication-quality chart:
+        </p>
+        <div class="figures-grid" id="sandboxFiguresGrid">
+          <!-- Dynamically populated by JS on dashboard load -->
         </div>
       </div>
     </div>
