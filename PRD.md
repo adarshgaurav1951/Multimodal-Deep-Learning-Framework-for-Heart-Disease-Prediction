@@ -130,11 +130,10 @@ heart_disease_multimodal_framework/
 │   │   ├── schemas.py                 # Request/Response Pydantic DTOs
 │   │   └── dependencies.py            # FastAPI dependency injection (Auth, DB, Model Service)
 │   ├── data/
-│   │   ├── contracts.py               # Data models, schema contracts, validation rules
+│   │   ├── csv_loader.py              # Strict CSV data ingestion, validation, and schemas
 │   │   ├── ecg_processor.py           # Bandpass/notch filtering, resampling, normalization
 │   │   ├── clinical_processor.py      # Missingness-aware imputer, standard scaler, encoder
-│   │   ├── dataset.py                 # PyTorch MultimodalDataset, GroupShuffleSplit
-│   │   └── synthetic_generator.py     # PhysioNet-realistic 12-lead ECG & clinical generator
+│   │   └── dataset.py                 # PyTorch MultimodalDataset, GroupShuffleSplit
 │   ├── models/
 │   │   ├── ecg_encoder.py             # Multi-Scale 1D CNN + BiLSTM + Attention/Avg Pooling
 │   │   ├── clinical_encoder.py        # Missingness-aware MLP with LayerNorm & Dropout
@@ -194,6 +193,13 @@ heart_disease_multimodal_framework/
 #### 6.1.3 Patient-Level Leakage-Free Splitting (`src/data/dataset.py`)
 - **Requirement:** Strict grouped splitting using `GroupShuffleSplit` on `patient_id`.
 - **Constraint:** Zero overlap of patient identifiers across Train (70%), Validation (15%), and Test (15%) sets. All segments, beats, or serial records belonging to patient $P_i$ are assigned exclusively to a single split.
+
+#### 6.1.4 CSV Data Ingestion & Storage Standard (`src/data/csv_loader.py`)
+- **Mandate:** All cohort data used for training, evaluation, and benchmarking must be stored in CSV format (`.csv`).
+- **File Hierarchy:**
+  - `data/heart_disease_multimodal.csv`: Complete multimodal dataset containing clinical features and all 12 ECG lead time-series waveforms.
+  - `data/heart_disease.csv`: Standard tabular clinical records with 12 physiological risk factors and disease targets.
+- **Strict Format Enforcement:** Data loaders enforce that only `.csv` files are accepted. Other data formats (e.g., SQLite `.db` databases or binary data files) are prohibited and removed from the active data pipeline.
 
 ---
 

@@ -1,25 +1,34 @@
 """
-Model Training and Experimentation Pipeline CLI.
-Trains unimodal baselines and multimodal fusion models, evaluates on patient-independent test split,
-and registers the best artifact.
+Model Training, Multi-Architecture Benchmarking, and Evaluation Pipeline CLI.
+Trains CNN, BiLSTM, Transformer, and Multimodal Fusion architectures,
+evaluates on patient-independent test splits, serializes the benchmark artifact,
+and generates diagnostic accuracy & ROC-AUC visualizations.
 """
 from __future__ import annotations
 
 import os
 import argparse
 import json
-import torch
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+
 import numpy as np
 import pandas as pd
+import torch
+from sklearn.metrics import roc_curve
 
 from src.config import settings
-from src.data.synthetic_generator import generate_synthetic_multimodal_cohort
-from src.data.contracts import DEFAULT_CLINICAL_FEATURES
+from src.data.csv_loader import DEFAULT_CLINICAL_FEATURES, load_cohort_from_csv
 from src.data.ecg_processor import ECGProcessor
 from src.data.clinical_processor import ClinicalProcessor
 from src.data.dataset import MultimodalDataset, patient_level_split, create_dataloaders
 from src.models.multimodal_classifier import MultimodalClassifier
-from src.models.baselines import ECGOnlyClassifier, ClinicalOnlyClassifier
+from src.models.baselines import (
+    ECGOnlyClassifier,
+    ECGTransformerClassifier,
+    ECGCNNTransformerClassifier,
+    ClinicalOnlyClassifier
+)
 from src.models.trainer import MultimodalTrainer, compute_binary_metrics, find_optimal_threshold
 from src.models.artifact import ModelArtifactManager
 from src.database.session import SessionLocal, init_db
@@ -27,21 +36,30 @@ from src.database.service import DatabaseService
 
 
 def run_pipeline(
+    data_source: Optional[str] = None,
     num_patients: int = 300,
     fusion_type: str = "gated",
-    epochs: int = 20,
+    epochs: int = 15,
     batch_size: int = 32,
     seed: int = 42,
-    artifact_output: str = "artifacts/best_multimodal_model.pt"
+    artifact_output: str = "artifacts/best_multimodal_model.pt",
+    benchmark_all: bool = True
 ):
-    print("=" * 70)
-    print("MULTIMODAL DEEP LEARNING HEART DISEASE PIPELINE")
+    print("=" * 80)
+    print("MULTIMODAL DEEP LEARNING HEART DISEASE PIPELINE: CNN, BiLSTM, TRANSFORMERS & FUSION")
     print(f"Device: {'cuda' if torch.cuda.is_available() else 'cpu'} | Random Seed: {seed}")
-    print("=" * 70)
+    print("=" * 80)
 
-    # 1. Ingest / Generate Cohort
-    print(f"\n[1/6] Ingesting cohort data ({num_patients} patients)...")
-    clinical_df, raw_ecgs = generate_synthetic_multimodal_cohort(num_patients=num_patients, seed=seed)
+    # 1. Ingest Cohort Data strictly from CSV
+    target_data_source = data_source or settings.CSV_DATASET_PATH
+    data_path = Path(target_data_source)
+    if not data_path.exists():
+        raise FileNotFoundError(
+            f"CSV dataset not found at '{target_data_source}'. Please provide a valid CSV dataset file."
+        )
+
+    print(f"\n[1/6] Ingesting cohort data strictly from CSV: '{target_data_source}'...")
+    clinical_df, raw_ecgs = load_cohort_from_csv(target_data_source)
     print(f"Total Records: {len(clinical_df)} across {clinical_df['patient_id'].nunique()} unique patients.")
     print(f"Label distribution: {clinical_df['target'].value_counts().to_dict()}")
 
@@ -60,12 +78,10 @@ def run_pipeline(
     # 3. Preprocessing (Fitted on Training Split Only)
     print("\n[3/6] Preprocessing ECG signals & clinical features (fit on TRAIN only)...")
     ecg_processor = ECGProcessor(target_fs=500.0, nominal_samples=2500)
-    # Batch filter ECGs
     filtered_ecgs = np.zeros_like(raw_ecgs, dtype=np.float32)
     for i in range(len(raw_ecgs)):
         filtered_ecgs[i] = ecg_processor.process(raw_ecgs[i], orig_fs=500.0)
 
-    # Clinical fit on train
     feature_cols = [c for c in DEFAULT_CLINICAL_FEATURES if c in clinical_df.columns]
     clinical_processor = ClinicalProcessor(feature_names=feature_cols)
     clinical_processor.fit(clinical_df.iloc[train_idx][feature_cols])
@@ -84,113 +100,166 @@ def run_pipeline(
 
     loaders = create_dataloaders(train_dataset, val_dataset, test_dataset, batch_size=batch_size)
 
-    # 4. Train Unimodal Baselines
-    print("\n[4/6] Training Unimodal Baselines for ablation benchmarking...")
-    
-    # ECG-only
-    print("  -> Training ECG-Only CNN-BiLSTM Baseline...")
-    ecg_baseline = ECGOnlyClassifier(in_leads=12, embedding_dim=128)
-    ecg_trainer = MultimodalTrainer(ecg_baseline)
-    # Train using custom loop for unimodal
-    for epoch in range(1, epochs + 1):
-        ecg_baseline.train()
-        for ecg_b, _, target_b in loaders["train"]:
-            ecg_trainer.optimizer.zero_grad()
-            out = ecg_baseline(ecg_b)
-            loss = ecg_trainer.criterion(out, target_b)
-            loss.backward()
-            ecg_trainer.optimizer.step()
-    ecg_baseline.eval()
-    with torch.no_grad():
-        ecg_test_probs = torch.sigmoid(ecg_baseline(torch.from_numpy(filtered_ecgs[test_idx]).float())).numpy()
-    ecg_metrics = compute_binary_metrics(y_test, ecg_test_probs)
-    print(f"     ECG Baseline Test AUROC: {ecg_metrics['auroc']} | AUPRC: {ecg_metrics['auprc']} | F1: {ecg_metrics['f1']}")
+    # 4. Model Suite Definition
+    models_to_train: Dict[str, torch.nn.Module] = {
+        "ECG CNN-BiLSTM": ECGOnlyClassifier(in_leads=12, embedding_dim=128),
+        "ECG Transformer": ECGTransformerClassifier(in_leads=12, embedding_dim=128, num_layers=2, num_heads=4),
+        "ECG CNN-Transformer": ECGCNNTransformerClassifier(in_leads=12, embedding_dim=128, num_layers=2, num_heads=4),
+        "Clinical MLP Baseline": ClinicalOnlyClassifier(n_features=len(feature_cols), embedding_dim=128),
+        "Multimodal Gated Fusion": MultimodalClassifier(
+            in_leads=12,
+            n_clinical_features=len(feature_cols),
+            embedding_dim=128,
+            fusion_type="gated",
+            ecg_backbone="cnn_bilstm"
+        ),
+        "Multimodal Cross-Attention": MultimodalClassifier(
+            in_leads=12,
+            n_clinical_features=len(feature_cols),
+            embedding_dim=128,
+            fusion_type="cross_attention",
+            ecg_backbone="transformer"
+        )
+    }
 
-    # Clinical-only
-    print("  -> Training Clinical-Only MLP Baseline...")
-    clin_baseline = ClinicalOnlyClassifier(n_features=len(feature_cols), embedding_dim=128)
-    clin_trainer = MultimodalTrainer(clin_baseline)
-    for epoch in range(1, epochs + 1):
-        clin_baseline.train()
-        for _, clin_b, target_b in loaders["train"]:
-            clin_trainer.optimizer.zero_grad()
-            out = clin_baseline(clin_b)
-            loss = clin_trainer.criterion(out, target_b)
-            loss.backward()
-            clin_trainer.optimizer.step()
-    clin_baseline.eval()
-    with torch.no_grad():
-        clin_test_probs = torch.sigmoid(clin_baseline(torch.from_numpy(X_test_clin).float())).numpy()
-    clin_metrics = compute_binary_metrics(y_test, clin_test_probs)
-    print(f"     Clinical Baseline Test AUROC: {clin_metrics['auroc']} | AUPRC: {clin_metrics['auprc']} | F1: {clin_metrics['f1']}")
+    if not benchmark_all:
+        models_to_train = {
+            f"Multimodal ({fusion_type})": MultimodalClassifier(
+                in_leads=12,
+                n_clinical_features=len(feature_cols),
+                embedding_dim=128,
+                fusion_type=fusion_type
+            )
+        }
 
-    # 5. Train Multimodal Model
-    print(f"\n[5/6] Training Multimodal Deep Learning Model (Fusion: {fusion_type.upper()})...")
-    multimodal_model = MultimodalClassifier(
-        in_leads=12,
-        n_clinical_features=len(feature_cols),
-        embedding_dim=128,
-        fusion_type=fusion_type
-    )
-    mm_trainer = MultimodalTrainer(multimodal_model, patience=8)
-    fit_res = mm_trainer.fit(loaders["train"], loaders["val"], epochs=epochs, verbose=True)
+    # 5. Train & Benchmark All Architectures
+    print(f"\n[4/6] Training & Benchmarking Models across Paradigms (CNN, BiLSTM, Transformers, Fusion)...")
+    benchmark_metrics: Dict[str, Dict[str, Any]] = {}
+    benchmark_roc: Dict[str, Dict[str, Any]] = {}
+    benchmark_histories: Dict[str, Dict[str, Any]] = {}
 
-    # Evaluate locked test set
-    val_loss, y_val_true, y_val_probs = mm_trainer.evaluate(loaders["val"])
-    opt_threshold = find_optimal_threshold(y_val_true, y_val_probs)
-    print(f"Optimal decision threshold tuned on validation set: {opt_threshold:.3f}")
+    best_model_name = None
+    best_model_auroc = -1.0
+    best_multimodal_instance = None
+    best_opt_threshold = 0.5
 
-    test_loss, y_test_true, y_test_probs = mm_trainer.evaluate(loaders["test"])
-    test_metrics = compute_binary_metrics(y_test_true, y_test_probs, threshold=opt_threshold)
-    print("\n" + "=" * 70)
+    for model_name, model in models_to_train.items():
+        print(f"\n  -> Training [{model_name}]...")
+        trainer = MultimodalTrainer(model, patience=6)
+        fit_res = trainer.fit(loaders["train"], loaders["val"], epochs=epochs, verbose=False)
+
+        # Validation optimal threshold
+        val_loss, y_val_true, y_val_probs = trainer.evaluate(loaders["val"])
+        opt_thresh = find_optimal_threshold(y_val_true, y_val_probs)
+
+        # Test evaluation
+        test_loss, y_test_true, y_test_probs = trainer.evaluate(loaders["test"])
+        metrics = compute_binary_metrics(y_test_true, y_test_probs, threshold=opt_thresh)
+        benchmark_metrics[model_name] = metrics
+
+        # Compute ROC curve coordinates (subsampled for light serializable JSON)
+        fpr, tpr, threshs = roc_curve(y_test_true, y_test_probs)
+        # Subsample to at most 40 points
+        step = max(1, len(fpr) // 35)
+        sub_fpr = [round(float(v), 4) for v in fpr[::step]]
+        sub_tpr = [round(float(v), 4) for v in tpr[::step]]
+        if sub_fpr[-1] != 1.0:
+            sub_fpr.append(1.0)
+            sub_tpr.append(1.0)
+
+        benchmark_roc[model_name] = {
+            "fpr": sub_fpr,
+            "tpr": sub_tpr,
+            "auroc": metrics["auroc"],
+            "threshold": opt_thresh
+        }
+
+        # Training history format
+        hist = fit_res.get("history", [])
+        benchmark_histories[model_name] = {
+            "epochs": [h["epoch"] for h in hist],
+            "train_loss": [h.get("train_loss", 0.0) for h in hist],
+            "train_acc": [h.get("train_acc", 0.0) for h in hist],
+            "val_loss": [h.get("val_loss", 0.0) for h in hist],
+            "val_acc": [h.get("accuracy", 0.0) for h in hist],
+            "val_auroc": [h.get("auroc", 0.0) for h in hist]
+        }
+
+        print(f"     Test Accuracy: {metrics['accuracy']*100:.1f}% | AUROC: {metrics['auroc']:.4f} | F1: {metrics['f1']:.4f} | Sens: {metrics['sensitivity']:.4f}")
+
+        # Keep track of best multimodal model for artifact registration
+        if isinstance(model, MultimodalClassifier) and metrics["auroc"] > best_model_auroc:
+            best_model_auroc = metrics["auroc"]
+            best_model_name = model_name
+            best_multimodal_instance = model
+            best_opt_threshold = opt_thresh
+
+    # Fallback if no MultimodalClassifier was trained
+    if best_multimodal_instance is None:
+        best_multimodal_instance = list(models_to_train.values())[-1]
+        best_opt_threshold = 0.5
+        best_model_name = list(models_to_train.keys())[-1]
+
+    # Display Pretty Comparison Table
+    print("\n" + "=" * 88)
     print("TEST EVALUATION BENCHMARK COMPARISON (Locked Holdout Patient Test Set)")
-    print("=" * 70)
-    print(f"{'Model':<25} | {'AUROC':<7} | {'AUPRC':<7} | {'F1':<7} | {'Sens':<7} | {'Spec':<7} | {'Brier':<7}")
-    print("-" * 70)
-    print(f"{'ECG-Only Baseline':<25} | {ecg_metrics['auroc']:<7} | {ecg_metrics['auprc']:<7} | {ecg_metrics['f1']:<7} | {ecg_metrics['sensitivity']:<7} | {ecg_metrics['specificity']:<7} | {ecg_metrics['brier_score']:<7}")
-    print(f"{'Clinical-Only Baseline':<25} | {clin_metrics['auroc']:<7} | {clin_metrics['auprc']:<7} | {clin_metrics['f1']:<7} | {clin_metrics['sensitivity']:<7} | {clin_metrics['specificity']:<7} | {clin_metrics['brier_score']:<7}")
-    print(f"{f'Multimodal ({fusion_type})':<25} | {test_metrics['auroc']:<7} | {test_metrics['auprc']:<7} | {test_metrics['f1']:<7} | {test_metrics['sensitivity']:<7} | {test_metrics['specificity']:<7} | {test_metrics['brier_score']:<7}")
-    print("=" * 70)
+    print("=" * 88)
+    print(f"{'Model Architecture':<30} | {'Accuracy':<9} | {'AUROC':<7} | {'AUPRC':<7} | {'F1':<7} | {'Sens':<7} | {'Spec':<7}")
+    print("-" * 88)
+    for name, m in benchmark_metrics.items():
+        print(f"{name:<30} | {m['accuracy']*100:6.1f}%  | {m['auroc']:<7.4f} | {m['auprc']:<7.4f} | {m['f1']:<7.4f} | {m['sensitivity']:<7.4f} | {m['specificity']:<7.4f}")
+    print("=" * 88)
 
-    # 6. Export and Register Artifact
-    print(f"\n[6/6] Packaging and serializing model artifact to {artifact_output}...")
+    # 6. Save Benchmark Results Artifact
+    bench_artifact_path = Path("artifacts/models_benchmark.json")
+    bench_payload = {
+        "metrics": benchmark_metrics,
+        "roc_data": benchmark_roc,
+        "histories": benchmark_histories,
+        "cohort_size": num_patients,
+        "features": feature_cols
+    }
+    with open(bench_artifact_path, "w") as f:
+        json.dump(bench_payload, f, indent=2)
+    print(f"\nSaved benchmark results artifact to {bench_artifact_path}")
+
+    # 7. Package and Serialize Best Model Artifact
+    print(f"\n[5/6] Packaging and serializing best model artifact to {artifact_output}...")
     model_card = {
-        "model_name": f"Multimodal Heart Disease Classifier ({fusion_type.capitalize()} Fusion)",
+        "model_name": f"Multimodal Heart Disease Classifier ({best_model_name})",
         "intended_use": "Investigational Cardiovascular ML Research",
         "cohort_size": num_patients,
         "ecg_lead_format": "12-lead (I, II, III, aVR, aVL, aVF, V1-V6)",
         "sampling_rate_hz": 500.0,
         "features": feature_cols,
-        "test_auroc": test_metrics["auroc"],
-        "test_auprc": test_metrics["auprc"],
-        "test_f1": test_metrics["f1"],
+        "test_accuracy": benchmark_metrics[best_model_name]["accuracy"],
+        "test_auroc": benchmark_metrics[best_model_name]["auroc"],
+        "test_auprc": benchmark_metrics[best_model_name]["auprc"],
+        "test_f1": benchmark_metrics[best_model_name]["f1"],
         "disclaimer": "Experimental research score only. Not for clinical diagnosis or triage."
     }
 
     sha256 = ModelArtifactManager.save_artifact(
-        model=multimodal_model,
+        model=best_multimodal_instance,
         clinical_processor=clinical_processor,
         save_path=artifact_output,
-        threshold=opt_threshold,
+        threshold=best_opt_threshold,
         version=f"v1.0.0-{fusion_type}",
-        metrics={"test": test_metrics, "ecg_baseline": ecg_metrics, "clinical_baseline": clin_metrics},
+        metrics={"test": benchmark_metrics[best_model_name], "all_models": benchmark_metrics},
         model_card=model_card
     )
-    print(f"Artifact saved successfully!")
-    print(f"SHA-256 Digest: {sha256}")
+    print(f"Artifact saved successfully! SHA-256 Digest: {sha256}")
 
     # Log to Database
     init_db()
     with SessionLocal() as db:
         exp = DatabaseService.save_experiment(
             db=db,
-            name=f"Multimodal {fusion_type.capitalize()} Experiment",
-            config={"num_patients": num_patients, "epochs": epochs, "fusion_type": fusion_type, "seed": seed},
+            name=f"Multimodal Deep Learning Suite Experiment",
+            config={"num_patients": num_patients, "epochs": epochs, "seed": seed},
             metrics_dict={
-                "val": fit_res["best_val_metrics"],
-                "test": test_metrics,
-                "ecg_baseline": ecg_metrics,
-                "clinical_baseline": clin_metrics
+                "test": benchmark_metrics[best_model_name],
+                "benchmark": benchmark_metrics
             }
         )
         mv = DatabaseService.register_model_version(
@@ -203,20 +272,32 @@ def run_pipeline(
         )
         print(f"Experiment logged to database (ID: {exp.id}, ModelVersion: {mv.version})")
 
-    print("\nPipeline execution complete! Model is ready for serving and sandbox testing.")
+    # 8. Generate Visualizations automatically
+    print("\n[6/6] Generating Publication-Quality Accuracy & ROC-AUC Visualizations...")
+    from generate_visualizations import run as gen_vis_run
+    try:
+        gen_vis_run()
+    except Exception as e:
+        print(f"Warning: Visualization generation encountered: {e}")
+
+    print("\nPipeline execution complete! Models are ready for serving and visualization.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multimodal Heart Disease Training Pipeline")
-    parser.add_argument("--patients", type=int, default=250, help="Number of cohort patients")
-    parser.add_argument("--fusion", type=str, default="gated", choices=["gated", "concat", "cross_attention"], help="Fusion mechanism")
+    parser.add_argument("--data", "--csv", type=str, default="data/heart_disease_multimodal.csv", help="Path to CSV dataset file")
+    parser.add_argument("--patients", type=int, default=300, help="Number of cohort patients")
+    parser.add_argument("--fusion", type=str, default="gated", choices=["gated", "concat", "cross_attention", "transformer"], help="Default fusion mechanism")
     parser.add_argument("--epochs", type=int, default=15, help="Number of training epochs")
     parser.add_argument("--artifact", type=str, default="artifacts/best_multimodal_model.pt", help="Path to save model artifact")
+    parser.add_argument("--benchmark-all", action="store_true", default=True, help="Benchmark all architectures (CNN, BiLSTM, Transformer, Fusion)")
     args = parser.parse_args()
 
     run_pipeline(
+        data_source=args.data,
         num_patients=args.patients,
         fusion_type=args.fusion,
         epochs=args.epochs,
-        artifact_output=args.artifact
+        artifact_output=args.artifact,
+        benchmark_all=args.benchmark_all
     )

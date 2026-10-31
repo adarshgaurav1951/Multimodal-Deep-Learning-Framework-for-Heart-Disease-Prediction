@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
-from src.data.contracts import STANDARD_12_LEADS, DEFAULT_CLINICAL_FEATURES
+from src.data.csv_loader import STANDARD_12_LEADS, DEFAULT_CLINICAL_FEATURES
 
 
 def compute_ecg_saliency(

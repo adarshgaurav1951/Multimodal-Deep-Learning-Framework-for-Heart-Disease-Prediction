@@ -108,9 +108,26 @@ class MultimodalTrainer:
         self.criterion = criterion or nn.BCEWithLogitsLoss()
         self.patience = patience
 
-    def train_epoch(self, loader: DataLoader) -> float:
+    def _forward_batch(self, ecg: torch.Tensor, clinical: torch.Tensor) -> torch.Tensor:
+        """Route inputs according to model modality requirements."""
+        if hasattr(self.model, "clinical_encoder") and hasattr(self.model, "ecg_encoder"):
+            return self.model(ecg, clinical)
+        elif hasattr(self.model, "encoder") and hasattr(self.model.encoder, "feature_names"):
+            # Tabular clinical encoder
+            return self.model(clinical)
+        elif hasattr(self.model, "head") and hasattr(self.model, "encoder"):
+            # ECG-only classifiers (CNN-BiLSTM, Transformer, Hybrid)
+            # Check if input looks like clinical (features dimension) or ECG
+            if hasattr(self.model.encoder, "in_leads"):
+                return self.model(ecg)
+            return self.model(clinical)
+        else:
+            return self.model(ecg, clinical)
+
+    def train_epoch(self, loader: DataLoader) -> Tuple[float, float]:
         self.model.train()
         total_loss = 0.0
+        total_correct = 0
         count = 0
         for ecg, clinical, target in loader:
             ecg = ecg.to(self.device).float()
@@ -118,25 +135,19 @@ class MultimodalTrainer:
             target = target.to(self.device).float()
 
             self.optimizer.zero_grad(set_to_none=True)
-            # Check model type
-            if hasattr(self.model, "clinical_encoder") and hasattr(self.model, "ecg_encoder"):
-                logits = self.model(ecg, clinical)
-            elif hasattr(self.model, "encoder") and ecg.shape[1] > 1:
-                # ECG only or Clinical only
-                logits = self.model(ecg) if hasattr(self.model, "head") and hasattr(self.model.encoder, "lstm") else self.model(clinical)
-            else:
-                logits = self.model(ecg, clinical)
-
+            logits = self._forward_batch(ecg, clinical)
             loss = self.criterion(logits, target)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
             batch_size = len(target)
+            preds = (torch.sigmoid(logits) >= 0.5).float()
+            total_correct += (preds == target).sum().item()
             total_loss += loss.item() * batch_size
             count += batch_size
 
-        return total_loss / max(1, count)
+        return total_loss / max(1, count), total_correct / max(1, count)
 
     @torch.no_grad()
     def evaluate(self, loader: DataLoader) -> Tuple[float, np.ndarray, np.ndarray]:
@@ -151,11 +162,7 @@ class MultimodalTrainer:
             clinical = clinical.to(self.device).float()
             target = target.to(self.device).float()
 
-            if hasattr(self.model, "clinical_encoder") and hasattr(self.model, "ecg_encoder"):
-                logits = self.model(ecg, clinical)
-            else:
-                logits = self.model(ecg, clinical)
-
+            logits = self._forward_batch(ecg, clinical)
             loss = self.criterion(logits, target)
             probs = torch.sigmoid(logits)
 
@@ -185,18 +192,19 @@ class MultimodalTrainer:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=epochs)
 
         for epoch in range(1, epochs + 1):
-            train_loss = self.train_epoch(train_loader)
+            train_loss, train_acc = self.train_epoch(train_loader)
             val_loss, y_true, y_probs = self.evaluate(val_loader)
             scheduler.step()
 
             metrics = compute_binary_metrics(y_true, y_probs, threshold=0.5)
             metrics["train_loss"] = round(train_loss, 4)
+            metrics["train_acc"] = round(train_acc, 4)
             metrics["val_loss"] = round(val_loss, 4)
             metrics["epoch"] = epoch
             history.append(metrics)
 
             if verbose and (epoch % 5 == 0 or epoch == 1 or epoch == epochs):
-                print(f"Epoch {epoch:02d}/{epochs:02d} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val AUROC: {metrics['auroc']:.4f} | Val F1: {metrics['f1']:.4f}")
+                print(f"Epoch {epoch:02d}/{epochs:02d} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc*100:.1f}% | Val Loss: {val_loss:.4f} | Val AUROC: {metrics['auroc']:.4f} | Val F1: {metrics['f1']:.4f}")
 
             # Early stopping check on validation AUROC
             if metrics["auroc"] > best_auroc:

@@ -46,7 +46,8 @@ class ModelArtifactManager:
                 "in_leads": model.in_leads,
                 "n_clinical_features": model.n_clinical_features,
                 "embedding_dim": model.embedding_dim,
-                "fusion_type": model.fusion_type
+                "fusion_type": model.fusion_type,
+                "ecg_backbone": getattr(model, "ecg_backbone", "cnn_bilstm")
             },
             "state_dict": model.state_dict(),
             "clinical_processor_state": clinical_processor.state_dict(),
@@ -86,7 +87,8 @@ class ModelArtifactManager:
             in_leads=arch["in_leads"],
             n_clinical_features=arch["n_clinical_features"],
             embedding_dim=arch["embedding_dim"],
-            fusion_type=arch["fusion_type"]
+            fusion_type=arch["fusion_type"],
+            ecg_backbone=arch.get("ecg_backbone", "cnn_bilstm")
         )
         model.load_state_dict(artifact["state_dict"])
         model.to(device)

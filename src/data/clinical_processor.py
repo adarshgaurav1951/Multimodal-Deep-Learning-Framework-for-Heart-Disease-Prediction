@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import List, Dict, Optional, Any, Union
 import numpy as np
 import pandas as pd
-from src.data.contracts import DEFAULT_CLINICAL_FEATURES, CLINICAL_FEATURE_SCHEMA
+from src.data.csv_loader import DEFAULT_CLINICAL_FEATURES, CLINICAL_FEATURE_SCHEMA
 
 
 class ClinicalProcessor:

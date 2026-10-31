@@ -11,13 +11,17 @@ from src.config import settings
 from src.database.models import Base, User
 from src.security.auth import hash_password
 
+from sqlalchemy.pool import StaticPool
+
 # SQLite connects with check_same_thread=False
 connect_args = {"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
+engine_kwargs = {"connect_args": connect_args, "echo": False}
+if ":memory:" in settings.DATABASE_URL:
+    engine_kwargs["poolclass"] = StaticPool
 
 engine = create_engine(
     settings.DATABASE_URL,
-    connect_args=connect_args,
-    echo=False
+    **engine_kwargs
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

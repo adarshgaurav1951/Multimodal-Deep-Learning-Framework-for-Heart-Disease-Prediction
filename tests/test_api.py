@@ -111,3 +111,52 @@ def test_predict_with_active_model():
     assert 0.0 <= data["research_score"] <= 1.0
     assert "disclaimer" in data
     assert "modality_contributions" in data
+
+
+def test_models_benchmark_endpoint():
+    res = client.get("/v1/models/benchmark")
+    assert res.status_code == 200
+    data = res.json()
+    assert "metrics" in data
+    assert "ECG Transformer" in data["metrics"]
+    assert "ECG CNN-BiLSTM" in data["metrics"]
+    assert "Multimodal Gated Fusion" in data["metrics"]
+    assert data["metrics"]["Multimodal Gated Fusion"]["auroc"] > 0.85
+
+
+def test_models_roc_auc_data_endpoint():
+    res = client.get("/v1/models/roc-auc-data")
+    assert res.status_code == 200
+    data = res.json()
+    assert "Multimodal Gated Fusion" in data
+    assert "fpr" in data["Multimodal Gated Fusion"]
+    assert "tpr" in data["Multimodal Gated Fusion"]
+    assert len(data["Multimodal Gated Fusion"]["fpr"]) > 5
+
+
+def test_training_history_endpoint():
+    res = client.get("/v1/models/training-history")
+    assert res.status_code == 200
+    data = res.json()
+    assert "Multimodal Gated Fusion" in data or "Multimodal Gated" in data
+
+
+def test_supported_architectures_endpoint():
+    res = client.get("/v1/models/architectures")
+    assert res.status_code == 200
+    data = res.json()
+    arch_ids = [item["id"] for item in data]
+    assert "multimodal_gated" in arch_ids
+    assert "multimodal_transformer" in arch_ids
+    assert "ecg_transformer" in arch_ids
+    assert "ecg_cnn_bilstm" in arch_ids
+
+
+def test_visualizations_list_endpoint():
+    res = client.get("/v1/visualizations/list")
+    assert res.status_code == 200
+    data = res.json()
+    filenames = [item["filename"] for item in data]
+    assert "07_model_accuracy_comparison.png" in filenames
+    assert "08_comparative_roc_curves.png" in filenames
+

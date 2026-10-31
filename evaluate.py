@@ -8,13 +8,19 @@ from __future__ import annotations
 import argparse
 import numpy as np
 import torch
+from pathlib import Path
+from typing import Optional
+from src.config import settings
 from src.models.artifact import ModelArtifactManager
-from src.data.synthetic_generator import generate_synthetic_multimodal_cohort
+from src.data.csv_loader import load_cohort_from_csv
 from src.models.trainer import compute_binary_metrics
 from src.models.explainability import compute_ecg_saliency, compute_clinical_attributions
 
 
-def evaluate_artifact(artifact_path: str, num_eval_patients: int = 100):
+def evaluate_artifact(
+    artifact_path: str,
+    data_source: Optional[str] = None
+):
     print(f"Loading artifact from {artifact_path}...")
     bundle = ModelArtifactManager.load_artifact(artifact_path)
     model = bundle["model"]
@@ -26,9 +32,13 @@ def evaluate_artifact(artifact_path: str, num_eval_patients: int = 100):
     print(f"Artifact SHA-256: {bundle['sha256']}")
     print(f"Tuned decision threshold: {threshold:.3f}")
 
-    # Generate evaluation cohort
-    print(f"\nGenerating evaluation cohort ({num_eval_patients} patients)...")
-    df_eval, raw_ecgs = generate_synthetic_multimodal_cohort(num_patients=num_eval_patients, seed=999)
+    # Load cohort data strictly from CSV
+    target_source = data_source or settings.CSV_DATASET_PATH
+    if not Path(target_source).exists():
+        raise FileNotFoundError(f"Evaluation CSV source not found at '{target_source}'.")
+
+    print(f"\nLoading evaluation cohort strictly from CSV source: '{target_source}'...")
+    df_eval, raw_ecgs = load_cohort_from_csv(target_source)
 
     # Preprocess
     proc_ecgs = np.zeros_like(raw_ecgs, dtype=np.float32)
@@ -75,7 +85,8 @@ def evaluate_artifact(artifact_path: str, num_eval_patients: int = 100):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate Heart Disease Model Artifact")
     parser.add_argument("--artifact", type=str, default="artifacts/best_multimodal_model.pt", help="Artifact path")
-    parser.add_argument("--patients", type=int, default=100, help="Number of evaluation patients")
+    parser.add_argument("--data", "--csv", type=str, default="data/heart_disease_multimodal.csv", help="Path to CSV dataset file (.csv) or directory containing CSV files")
+    parser.add_argument("--patients", type=int, default=100, help="Number of evaluation patients (if generating new CSV)")
     args = parser.parse_args()
 
-    evaluate_artifact(args.artifact, args.patients)
+    evaluate_artifact(args.artifact, data_source=args.data)

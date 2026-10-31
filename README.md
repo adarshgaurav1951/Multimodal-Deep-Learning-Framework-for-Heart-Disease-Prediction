@@ -4,7 +4,7 @@
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![PyTorch 2.3+](https://img.shields.io/badge/PyTorch-2.3+-ee4c2c.svg)](https://pytorch.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com/)
-[![Tests](https://img.shields.io/badge/Tests-19%20Passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-21%20Passed-brightgreen.svg)]()
 [![Status](https://img.shields.io/badge/Status-Research%20Prototype%20(RUO)-amber.svg)]()
 
 > **CRITICAL CLINICAL & REGULATORY DISCLAIMER:**
@@ -60,7 +60,8 @@ This repository provides an open, mathematically rigorous, and leakage-safe deep
 3. **Dynamic Gated Modality Fusion:** Learns adaptive modality weights $g \in [0, 1]$ to dynamically modulate reliance on electrophysiology vs clinical risk factors.
 4. **Leakage-Safe Patient-Level Splits:** Strict `GroupShuffleSplit` on `patient_id` guarantees zero patient overlap across training, validation, and test sets.
 5. **Explainability Engine:** Integrated Gradients identify salient ECG lead segments (e.g. ST segment elevation/depression), paired with gradient-based clinical feature attributions.
-6. **Production FastAPI Service:** Schema validation (Pydantic v2), OAuth2/JWT authentication, RBAC, database audit telemetry, and a built-in modern dark-mode Research Dashboard.
+6. **Strict CSV Data Ingestion:** All cohort datasets are stored, parsed, and loaded strictly as CSV (`.csv`) files; non-CSV data files are removed.
+7. **Production FastAPI Service:** Schema validation (Pydantic v2), OAuth2/JWT authentication, RBAC, database audit telemetry, and a built-in modern dark-mode Research Dashboard.
 
 ---
 
@@ -74,12 +75,19 @@ heart_disease_multimodal_framework/
 ├── .env.example                       # Configuration template
 ├── .env                               # Active local configuration
 ├── app.py                             # FastAPI service and dashboard entry point
-├── train.py                           # CLI training pipeline (baselines + multimodal)
-├── evaluate.py                        # CLI test evaluation & calibration reporter
+├── train.py                           # CLI training pipeline (strictly ingests CSV)
+├── evaluate.py                        # CLI test evaluation & calibration reporter (CSV ingestion)
+├── data/                              # Dataset repository (STRICTLY CSV ONLY)
+│   ├── heart_disease_multimodal.csv   # Unified multimodal CSV (clinical features + 12 ECG leads)
+│   └── heart_disease.csv              # Canonical clinical dataset (.csv)
 ├── src/
 │   ├── config.py                      # Pydantic Settings configuration
 │   ├── api/                           # FastAPI routers, schemas, dependencies
-│   ├── data/                          # Signal processor, clinical imputer, dataset, cohort generator
+│   ├── data/                          # CSV loader, signal processor, clinical imputer, dataset
+│   │   ├── csv_loader.py              # Ingestion, validation, schemas, and CSV parsing
+│   │   ├── ecg_processor.py           # Butterworth 0.5-45 Hz filtering & normalization
+│   │   ├── clinical_processor.py      # Missingness-aware imputer and standard scaler
+│   │   └── dataset.py                 # PyTorch MultimodalDataset & patient-level split
 │   ├── models/                        # CNN-BiLSTM, MLP, Fusion, Explainability, Artifact manager
 │   ├── database/                      # SQLAlchemy models, sessions, and repository service
 │   └── security/                      # Password hashing (bcrypt), JWT tokens, RBAC
@@ -89,8 +97,8 @@ heart_disease_multimodal_framework/
 │   └── js/app.js
 ├── notebooks/                         # Complete step-by-step reproducible research notebook
 │   └── multimodal_heart_disease_pipeline.ipynb
-├── tests/                             # Unit and integration test suite (19 test cases)
-│   ├── test_data_processing.py
+├── tests/                             # Unit and integration test suite (21 test cases)
+│   ├── test_data_processing.py        # Includes CSV validation and non-CSV rejection tests
 │   ├── test_models.py
 │   └── test_api.py
 └── artifacts/                         # Serialized model checkpoints (.pt) and model cards
@@ -121,16 +129,27 @@ pytest -v
 ```
 
 ### 3.3 Train and Benchmark Models
-Train unimodal baselines and the multimodal gated fusion model on a patient-grouped cohort:
+Train unimodal baselines and the multimodal gated fusion model on a patient-grouped cohort loaded strictly from CSV:
 ```bash
-python train.py --patients 250 --epochs 15 --fusion gated
+python train.py --data data/heart_disease_multimodal.csv --epochs 15 --fusion gated
 ```
 This produces:
 - Locked holdout test set evaluation table (comparing ECG-Only vs Clinical-Only vs Multimodal)
 - Optimal decision threshold calculation using Youden's J statistic
 - Serialized, integrity-hashed model artifact at `artifacts/best_multimodal_model.pt`
 
-### 3.4 Launch FastAPI Web Application & Dashboard
+### 3.4 Independent Evaluation on CSV Cohort
+Evaluate a saved artifact against an independent test set stored in a CSV file:
+```bash
+python evaluate.py --artifact artifacts/best_multimodal_model.pt --data data/heart_disease_multimodal.csv
+```
+
+### 3.5 CSV Data Specification & Storage
+All datasets used by the framework are stored strictly in **CSV format (`.csv`)**. Any legacy or non-CSV data files (e.g., SQLite `.db` databases) have been removed.
+- **`data/heart_disease_multimodal.csv`**: Complete multimodal dataset containing clinical variables and all 12 ECG lead time-series signals (`lead_I` through `lead_V6`).
+- **`data/heart_disease.csv`**: Canonical tabular heart disease records with 12 physiological features, `record_id`, `patient_id`, and binary disease `target`.
+
+### 3.6 Launch FastAPI Web Application & Dashboard
 ```bash
 uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 ```

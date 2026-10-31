@@ -95,3 +95,42 @@ def test_patient_level_split_no_leakage():
     assert len(train_pts.intersection(val_pts)) == 0
     assert len(train_pts.intersection(test_pts)) == 0
     assert len(val_pts.intersection(test_pts)) == 0
+
+
+def test_save_and_load_cohort_csv(tmp_path):
+    from src.data.csv_loader import save_cohort_to_csv, load_cohort_from_csv
+
+    clin_df = pd.DataFrame({
+        "record_id": [f"REC_{i:03d}" for i in range(10)],
+        "patient_id": [f"PAT_{i:03d}" for i in range(10)],
+        "age": [50 + i for i in range(10)],
+        "sex": [1.0 if i % 2 == 0 else 0.0 for i in range(10)],
+        "target": [i % 2 for i in range(10)]
+    })
+    ecgs = np.random.randn(10, 12, 500).astype(np.float32)
+    saved_files = save_cohort_to_csv(clin_df, ecgs, data_dir=tmp_path)
+
+    assert saved_files["clinical"].exists()
+    assert saved_files["multimodal"].exists()
+
+    # Load from directory
+    loaded_clin, loaded_ecgs = load_cohort_from_csv(tmp_path, nominal_samples=500)
+    assert len(loaded_clin) == len(clin_df)
+    assert loaded_ecgs.shape == ecgs.shape
+    assert set(loaded_clin["patient_id"]) == set(clin_df["patient_id"])
+
+    # Load from single multimodal CSV
+    loaded_clin_single, loaded_ecgs_single = load_cohort_from_csv(saved_files["multimodal"], nominal_samples=500)
+    assert len(loaded_clin_single) == len(clin_df)
+    assert loaded_ecgs_single.shape == ecgs.shape
+
+
+def test_csv_loader_rejects_non_csv(tmp_path):
+    from src.data.csv_loader import load_cohort_from_csv
+
+    fake_db = tmp_path / "data.db"
+    fake_db.write_text("fake binary database content")
+
+    with pytest.raises(ValueError, match="All data must be in CSV format"):
+        load_cohort_from_csv(fake_db)
+

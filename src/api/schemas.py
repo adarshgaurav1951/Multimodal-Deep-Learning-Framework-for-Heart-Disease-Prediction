@@ -14,6 +14,7 @@ class PredictRequest(BaseModel):
     sampling_rate_hz: float = Field(500.0, gt=0, le=5000, description="Acquisition sampling rate in Hz")
     ecg: List[List[float]] = Field(..., description="ECG waveform as [leads][samples]")
     clinical: Dict[str, Optional[float]] = Field(..., description="Clinical feature mapping matching the trained schema")
+    architecture: Optional[str] = Field("active", description="active, multimodal_gated, multimodal_transformer, ecg_transformer, ecg_cnn_bilstm, clinical_mlp")
 
 
 class ModalityContributions(BaseModel):
@@ -24,6 +25,7 @@ class ModalityContributions(BaseModel):
 class PredictResponse(BaseModel):
     request_id: str
     model_version: str
+    architecture: str = "active"
     research_score: float = Field(..., description="Calculated experimental risk probability [0, 1]")
     decision_threshold: float
     prediction_label: str

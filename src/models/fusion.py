@@ -100,7 +100,68 @@ class CrossAttentionFusion(nn.Module):
             attended_ecg = attn_out.squeeze(1)
 
         fused = self.proj(torch.cat([attended_ecg, z_clinical], dim=-1))
-        return fused, {"cross_attention": True}
+        # Compute relative norm energy for telemetry
+        ecg_n = float(torch.norm(attended_ecg, dim=-1).mean().item())
+        clin_n = float(torch.norm(z_clinical, dim=-1).mean().item())
+        total_n = ecg_n + clin_n if (ecg_n + clin_n) > 0 else 1.0
+        ecg_w = round(ecg_n / total_n, 3)
+
+        return fused, {
+            "cross_attention": True,
+            "ecg_weight": ecg_w,
+            "clinical_weight": round(1.0 - ecg_w, 3)
+        }
+
+
+class MultimodalTransformerFusion(nn.Module):
+    """
+    Multimodal Transformer Joint Attention Fusion.
+    Concatenates clinical token and ECG temporal tokens into a joint cross-modal sequence,
+    allowing full bidirectional self-attention between modalities.
+    """
+    def __init__(self, ecg_dim: int = 128, clinical_dim: int = 128, out_dim: int = 128, num_heads: int = 4):
+        super().__init__()
+        self.clin_proj = nn.Linear(clinical_dim, ecg_dim)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=ecg_dim,
+            nhead=num_heads,
+            dim_feedforward=256,
+            dropout=0.15,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True
+        )
+        self.joint_transformer = nn.TransformerEncoder(encoder_layer, num_layers=2, enable_nested_tensor=False)
+        self.proj = nn.Sequential(
+            nn.Linear(ecg_dim * 2, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.GELU()
+        )
+        self.out_dim = out_dim
+
+    def forward(self, z_ecg: torch.Tensor, z_clinical: torch.Tensor, ecg_tokens: torch.Tensor = None):
+        clin_token = self.clin_proj(z_clinical).unsqueeze(1)  # [batch, 1, ecg_dim]
+        if ecg_tokens is not None:
+            joint_seq = torch.cat([clin_token, ecg_tokens], dim=1)  # [batch, 1 + seq_len, dim]
+        else:
+            joint_seq = torch.cat([clin_token, z_ecg.unsqueeze(1)], dim=1)
+
+        joint_out = self.joint_transformer(joint_seq)
+        attended_clin = joint_out[:, 0, :]
+        attended_ecg = torch.mean(joint_out[:, 1:, :], dim=1)
+
+        fused = self.proj(torch.cat([attended_ecg, attended_clin], dim=-1))
+
+        ecg_n = float(torch.norm(attended_ecg, dim=-1).mean().item())
+        clin_n = float(torch.norm(attended_clin, dim=-1).mean().item())
+        total_n = ecg_n + clin_n if (ecg_n + clin_n) > 0 else 1.0
+        ecg_w = round(ecg_n / total_n, 3)
+
+        return fused, {
+            "transformer_fusion": True,
+            "ecg_weight": ecg_w,
+            "clinical_weight": round(1.0 - ecg_w, 3)
+        }
 
 
 def get_fusion_module(fusion_type: str, ecg_dim: int = 128, clinical_dim: int = 128, out_dim: int = 128) -> nn.Module:
@@ -109,7 +170,9 @@ def get_fusion_module(fusion_type: str, ecg_dim: int = 128, clinical_dim: int = 
         return GatedFusion(ecg_dim, clinical_dim, out_dim)
     elif fusion_type in ("cross_attention", "attention"):
         return CrossAttentionFusion(ecg_dim, clinical_dim, out_dim)
+    elif fusion_type in ("transformer", "transformer_fusion", "multimodal_transformer"):
+        return MultimodalTransformerFusion(ecg_dim, clinical_dim, out_dim)
     elif fusion_type in ("concat", "concatenation"):
         return ConcatFusion(ecg_dim, clinical_dim, out_dim)
     else:
-        raise ValueError(f"Unknown fusion type: {fusion_type}. Choose 'gated', 'concat', or 'cross_attention'.")
+        raise ValueError(f"Unknown fusion type: {fusion_type}. Choose 'gated', 'concat', 'cross_attention', or 'transformer'.")

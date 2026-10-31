@@ -28,7 +28,9 @@ class Settings(BaseSettings):
     MODEL_VERSION: str = "v1.0.0-multimodal-gated"
     MAX_ECG_SAMPLES: int = 20000
 
-    DATABASE_URL: str = f"sqlite:///{BASE_DIR / 'heart_disease_research.db'}"
+    DATA_DIR: str = str(BASE_DIR / "data")
+    CSV_DATASET_PATH: str = str(BASE_DIR / "data" / "heart_disease_multimodal.csv")
+    DATABASE_URL: str = "sqlite:///:memory:"
     LOG_LEVEL: str = "INFO"
 
     # Default physiological sampling params
